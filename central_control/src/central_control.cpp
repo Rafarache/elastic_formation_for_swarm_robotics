@@ -35,6 +35,9 @@ typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseCl
 
 #define INC_DIST 0.2 // turtlebot size
 
+#define ELASTIC_FORMATION_THRESHOLD 0.5 // the distance for the robot and the formation center cannot be smaller than 50% from initialy planned 
+
+
 // For callbacks
 geometry_msgs::Pose robots_position[NUM_ROBOTS+1];
 nav_msgs::OccupancyGrid global_costmap_recevied, map_recevied;
@@ -79,6 +82,7 @@ class Control{
     bool FormationNearGoal();
     void SetInitialStartPosition(float x, float y, float z, float ang);
     void SetGoalPosition(float x, float y, float z, float ang);
+    bool isFormationInElasticThreshold();
 
     void CreateFormationMapMsg(int robot_num);
     geometry_msgs::PoseStamped CalculateRobotIdealPoseOnFormation(int robot_num);
@@ -533,6 +537,34 @@ void Control::FirstMoveFormation(navfn::NavfnROS *planner){
 
 }
 
+bool Control::isFormationInElasticThreshold() {
+  bool obst = false;
+
+  #ifndef PURE_METHOD
+  // Elastic form
+  int i_central,j_central, index, tam = 0.3 / global_map_resolution_;
+  float formation_ang = ComputeYaw(formation_center.orientation);
+
+  for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++) {
+    float min_dist = ELASTIC_FORMATION_THRESHOLD * initial_pot_parameter_v_dist_ang[robot_num-1][0];
+
+    std::tie(i_central,j_central) = transformCoordinateOdomToMap(formation_center.position.x + min_dist * cos(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)), formation_center.position.y + min_dist * sin(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)));
+    // It verifies a square
+    for(int i = i_central - tam; i <= i_central + tam && !obst; i++){
+      for(int j = j_central - tam; j <= j_central + tam && !obst; j++){
+        int map_index = i + j * global_map_width_;
+        if(global_map_[robot_num][map_index].CELL_TYPE == kUnknown || global_map_[robot_num][map_index].CELL_TYPE == kObstacle || global_map_[robot_num][map_index].CELL_TYPE == kExtraExpansion){
+          obst = true;
+          break;
+        }
+      }
+    }
+  }
+  #endif
+  
+  return obst;
+}
+
 // It moves the formation_center using the new plan, it can stop the formation
 void Control::MoveFormation(navfn::NavfnROS *planner){
 
@@ -586,7 +618,8 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
       }
     }
     formation_ang = atan2(intermediate_goal.position.y - formation_center.position.y, intermediate_goal.position.x - formation_center.position.x);
-    
+    new_quat = computeQuaternionFromYaw(formation_ang);
+
     int prox_pose = 5;
 
     duration_int = time_now - time_ant;
@@ -605,9 +638,10 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
       formation_center.position.y += desloc_y;
     }
 
-    new_quat = computeQuaternionFromYaw(formation_ang);
     formation_center.orientation = new_quat;
     intermediate_goal.orientation = new_quat;
+
+    ROS_WARN("LIMIT %d", isFormationInElasticThreshold());
 
     #ifdef FORMATION_STATE_DEBUG
     ROS_WARN("WALKING");
@@ -647,6 +681,9 @@ void Control::CalculateVparamCurrent(){
     }
 
     test_dist = test_dist - INC_DIST;
+
+    
+   ROS_WARN("DIST x: %f, MAX: %f", test_dist, initial_pot_parameter_v_dist_ang[robot_num-1][0]);
 
     if(test_dist > initial_pot_parameter_v_dist_ang[robot_num-1][0])
       test_dist = initial_pot_parameter_v_dist_ang[robot_num-1][0];
@@ -854,6 +891,7 @@ int main(int argc, char** argv){
   finished_operation_pub.publish(central_control.finished_msg);
 
   // House
+  // central_control.SetInitialStartPosition(-4, 1, 0 , 0);
   // central_control.SetGoalPosition(-2.5, 1, 0, 0);
   // central_control.SetGoalPosition(-4.95, 3.2, 0, 3.14);
   // central_control.SetGoalPosition(-1, 1, 0, 0);
@@ -873,7 +911,7 @@ int main(int argc, char** argv){
 
   // Tunnelx2
   central_control.SetInitialStartPosition(1, 0, 0, 0);
-  central_control.SetGoalPosition(5, 0, 0, 0);
+  central_control.SetGoalPosition(7.5, 0, 0, 0);
 
   initial_time = ros::Time::now();
 
