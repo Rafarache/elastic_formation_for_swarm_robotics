@@ -854,9 +854,8 @@ int main(int argc, char** argv){
   finished_operation_pub.publish(central_control.finished_msg);
 
   // House
-  central_control.SetInitialStartPosition(-4, 1, 0 , 0);
   // central_control.SetGoalPosition(-2.5, 1, 0, 0);
-  central_control.SetGoalPosition(-4.95, 3.2, 0, 3.14);
+  // central_control.SetGoalPosition(-4.95, 3.2, 0, 3.14);
   // central_control.SetGoalPosition(-1, 1, 0, 0);
 
   // // Ampulheta
@@ -867,6 +866,14 @@ int main(int argc, char** argv){
   // Columns
   // central_control.SetInitialStartPosition(-1.5, -1.0, 0.0, 1.57);
   // central_control.SetGoalPosition(-3.0, 5.3, 0.0, 1.57);
+
+  // Tunnel
+  // central_control.SetInitialStartPosition(0.5, 0, 0, 0);
+  // central_control.SetGoalPosition(5, 0, 0, 0);
+
+  // Tunnelx2
+  central_control.SetInitialStartPosition(1, 0, 0, 0);
+  central_control.SetGoalPosition(5, 0, 0, 0);
 
   initial_time = ros::Time::now();
 
