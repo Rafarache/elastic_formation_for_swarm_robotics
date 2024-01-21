@@ -35,7 +35,7 @@ typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseCl
 
 #define INC_DIST 0.2 // turtlebot size
 
-#define ELASTIC_FORMATION_THRESHOLD 0.5 // the distance for the robot and the formation center cannot be smaller than 50% from initialy planned 
+#define ELASTIC_FORMATION_THRESHOLD 0.6 // the distance for the robot and the formation center cannot be smaller than 50% from initialy planned 
 
 
 // For callbacks
@@ -82,7 +82,9 @@ class Control{
     bool FormationNearGoal();
     void SetInitialStartPosition(float x, float y, float z, float ang);
     void SetGoalPosition(float x, float y, float z, float ang);
-    bool isFormationInElasticThreshold();
+
+    void SetFormationUnitePose();
+    bool isFormationInElasticThreshold(geometry_msgs::Pose pose);
 
     void CreateFormationMapMsg(int robot_num);
     geometry_msgs::PoseStamped CalculateRobotIdealPoseOnFormation(int robot_num);
@@ -103,6 +105,10 @@ class Control{
     }
 
     geometry_msgs::Pose formation_center_initial, formation_center;
+    
+    
+    bool formationSeparated = false;
+    geometry_msgs::Pose unitePose;
 
   private:
     float dist_intermediate_center;
@@ -131,7 +137,6 @@ class Control{
 
     float pot_parameter_e [NUM_ROBOTS];
     float pot_parameter_v [NUM_ROBOTS][2];
-
 };
 
 ///////////////////////////////////
@@ -537,18 +542,18 @@ void Control::FirstMoveFormation(navfn::NavfnROS *planner){
 
 }
 
-bool Control::isFormationInElasticThreshold() {
+bool Control::isFormationInElasticThreshold(geometry_msgs::Pose pose) {
   bool obst = false;
 
   #ifndef PURE_METHOD
   // Elastic form
   int i_central,j_central, index, tam = 0.3 / global_map_resolution_;
-  float formation_ang = ComputeYaw(formation_center.orientation);
+  float formation_ang = ComputeYaw(pose.orientation);
 
   for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++) {
     float min_dist = ELASTIC_FORMATION_THRESHOLD * initial_pot_parameter_v_dist_ang[robot_num-1][0];
 
-    std::tie(i_central,j_central) = transformCoordinateOdomToMap(formation_center.position.x + min_dist * cos(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)), formation_center.position.y + min_dist * sin(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)));
+    std::tie(i_central,j_central) = transformCoordinateOdomToMap(pose.position.x + min_dist * cos(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)), pose.position.y + min_dist * sin(constrainAngle(initial_pot_parameter_v_dist_ang[robot_num-1][1] + formation_ang)));
     // It verifies a square
     for(int i = i_central - tam; i <= i_central + tam && !obst; i++){
       for(int j = j_central - tam; j <= j_central + tam && !obst; j++){
@@ -641,7 +646,14 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
     formation_center.orientation = new_quat;
     intermediate_goal.orientation = new_quat;
 
-    ROS_WARN("LIMIT %d", isFormationInElasticThreshold());
+    if(!formationSeparated && isFormationInElasticThreshold(formation_center)) {
+      formationSeparated = true;
+      SetFormationUnitePose();
+    }
+
+    ROS_WARN("LIMIT %d", formationSeparated);
+    ROS_WARN("For %f %f", formation_center.position.x, formation_center.position.y);
+    ROS_WARN("Int %f %f", intermediate_goal.position.x, intermediate_goal.position.y);
 
     #ifdef FORMATION_STATE_DEBUG
     ROS_WARN("WALKING");
@@ -651,6 +663,29 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
   }
   time_ant = time_now;
 
+}
+
+void Control::SetFormationUnitePose(){
+
+  int prox_pose = 5;
+  int prox_pose_sum = prox_pose;
+  geometry_msgs::Quaternion new_quat;
+  bool isInThreshold = true;
+
+  do{
+    formation_ang = atan2(plan[prox_pose_sum].pose.position.y - plan[prox_pose_sum - prox_pose].pose.position.y, plan[prox_pose_sum].pose.position.x - plan[prox_pose_sum - prox_pose].pose.position.x);
+    new_quat = computeQuaternionFromYaw(formation_ang);
+
+    unitePose.position.x = plan[prox_pose_sum].pose.position.x;
+    unitePose.position.y = plan[prox_pose_sum].pose.position.y;
+    unitePose.orientation = new_quat;
+
+    isInThreshold = isFormationInElasticThreshold(unitePose);
+    
+    prox_pose_sum = prox_pose_sum + prox_pose;
+  } while (isInThreshold);
+
+  ROS_WARN("Unite Pose %f %f", unitePose.position.x, unitePose.position.y);
 }
 
 // It calculates the pot_parameter_v_current using initial_parameter_v and formation_center.orientation
@@ -683,7 +718,7 @@ void Control::CalculateVparamCurrent(){
     test_dist = test_dist - INC_DIST;
 
     
-   ROS_WARN("DIST x: %f, MAX: %f", test_dist, initial_pot_parameter_v_dist_ang[robot_num-1][0]);
+  //  ROS_WARN("DIST x: %f, MAX: %f", test_dist, initial_pot_parameter_v_dist_ang[robot_num-1][0]);
 
     if(test_dist > initial_pot_parameter_v_dist_ang[robot_num-1][0])
       test_dist = initial_pot_parameter_v_dist_ang[robot_num-1][0];
@@ -937,35 +972,41 @@ int main(int argc, char** argv){
 
       central_control.MoveFormation(&navfn);
 
-      central_control.SetFormationMapLimits();
+      // central_control.formationSeparated
+      if(false) {
 
-      central_control.CalculateVparamCurrent();
 
-      central_control.InitializePotentialField();
+      } else {
+        central_control.SetFormationMapLimits();
 
-      for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++)
-        for(int p=0;p<150;p++)
-          central_control.UpdatePotentialField(robot_num);
+        central_control.CalculateVparamCurrent();
 
-      central_control.AddNeighborAsObstacle();
+        central_control.InitializePotentialField();
 
-      for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
-        for(int p=0;p< 10;p++)
-          central_control.UpdatePotentialField(robot_num);
+        for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++)
+          for(int p=0;p<150;p++)
+            central_control.UpdatePotentialField(robot_num);
 
-        #ifdef PUB_POT_MAPS
-          central_control.CreateFormationMapMsg(robot_num);
-          formation_map_pub[robot_num].publish(formation_map[robot_num]);
-        #endif
+        central_control.AddNeighborAsObstacle();
 
-        std::tie(grad_msg.data, grad_mag_msg.data) = central_control.GradientDescentOrientationMag(robot_num);
-        robot_grad_pub[robot_num].publish(grad_msg);
-        robot_grad_mag_pub[robot_num].publish(grad_mag_msg);
-      
-        pose_msg = central_control.CalculateRobotIdealPoseOnFormation(robot_num);
-        pose_msg.header.stamp=ros::Time::now();
-        pose_msg.header.frame_id="map";
-        robot_on_formation_pub[robot_num].publish(pose_msg);
+        for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
+          for(int p=0;p< 10;p++)
+            central_control.UpdatePotentialField(robot_num);
+
+          #ifdef PUB_POT_MAPS
+            central_control.CreateFormationMapMsg(robot_num);
+            formation_map_pub[robot_num].publish(formation_map[robot_num]);
+          #endif
+
+          std::tie(grad_msg.data, grad_mag_msg.data) = central_control.GradientDescentOrientationMag(robot_num);
+          robot_grad_pub[robot_num].publish(grad_msg);
+          robot_grad_mag_pub[robot_num].publish(grad_mag_msg);
+        
+          pose_msg = central_control.CalculateRobotIdealPoseOnFormation(robot_num);
+          pose_msg.header.stamp=ros::Time::now();
+          pose_msg.header.frame_id="map";
+          robot_on_formation_pub[robot_num].publish(pose_msg);
+        }
       }
 
       test_point_msg.header.stamp = ros::Time::now();
