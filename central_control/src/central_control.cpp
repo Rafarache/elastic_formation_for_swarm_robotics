@@ -85,6 +85,7 @@ class Control{
 
     void SetFormationUnitePose();
     bool isFormationInElasticThreshold(geometry_msgs::Pose pose);
+    void MoveRobotsToFormationUnitePoint(navfn::NavfnROS *planner);
 
     void CreateFormationMapMsg(int robot_num);
     geometry_msgs::PoseStamped CalculateRobotIdealPoseOnFormation(int robot_num);
@@ -402,23 +403,40 @@ std::tuple<float, float> Control::GradientDescentOrientationMag(int robot_num){
 
 // It sets the limits using formation_center and formation_side_size
 void Control::SetFormationMapLimits(){
-  int i_formation_small, j_formation_small, i_formation_large, j_formation_large;
+  int i_formation_small = 0, j_formation_small = 0, i_formation_large = global_map_height_-1, j_formation_large = global_map_height_-1;
+  int i_formation_small_aux, j_formation_small_aux, i_formation_large_aux, j_formation_large_aux;
 
-  std::tie(i_formation_small, j_formation_small) = transformCoordinateOdomToMap(formation_center.position.x-formation_side_size/2.0, formation_center.position.y-formation_side_size/2.0);
-  std::tie(i_formation_large, j_formation_large) = transformCoordinateOdomToMap(formation_center.position.x+formation_side_size/2.0, formation_center.position.y+formation_side_size/2.0);
+  if(formationSeparated){
+    for(int robot_num=INITIAL_MAP; robot_num<=NUM_ROBOTS; robot_num++){
+      std::tie(i_formation_small_aux, j_formation_small_aux) = transformCoordinateOdomToMap(robots_position[robot_num].position.x-formation_side_size/2.0, robots_position[robot_num].position.y-formation_side_size/2.0);
+      std::tie(i_formation_large_aux, j_formation_large_aux) = transformCoordinateOdomToMap(robots_position[robot_num].position.x+formation_side_size/2.0, robots_position[robot_num].position.y+formation_side_size/2.0);
+      
+      i_formation_small = std::max(i_formation_small, i_formation_small_aux);
+      j_formation_small = std::max(j_formation_small, j_formation_small_aux);
+      i_formation_large = std::min(i_formation_large, i_formation_large_aux);
+      j_formation_large = std::min(j_formation_large, j_formation_large_aux);
+      ROS_WARN("Pos %d : %f %f", robot_num, robots_position[robot_num].position.x, robots_position[robot_num].position.y);
+    }
+    ROS_WARN("Small %d %d Large %d %d", i_formation_small, j_formation_small, i_formation_large, j_formation_large);
 
-  if(i_formation_small>0) smallest_global_i_ = i_formation_small;
-  else                    smallest_global_i_ = 0;
+  }else {
+    std::tie(i_formation_small, j_formation_small) = transformCoordinateOdomToMap(formation_center.position.x-formation_side_size/2.0, formation_center.position.y-formation_side_size/2.0);
+    std::tie(i_formation_large, j_formation_large) = transformCoordinateOdomToMap(formation_center.position.x+formation_side_size/2.0, formation_center.position.y+formation_side_size/2.0);
 
-  if(j_formation_small>0) smallest_global_j_ = j_formation_small;
-  else                    smallest_global_j_ = 0;
+    if(i_formation_small>0) smallest_global_i_ = i_formation_small;
+    else                    smallest_global_i_ = 0;
 
-  if(i_formation_large<=global_map_width_-1)  largest_global_i_ = i_formation_large;
-  else                                        largest_global_i_ = global_map_width_-1;
+    if(j_formation_small>0) smallest_global_j_ = j_formation_small;
+    else                    smallest_global_j_ = 0;
 
-  if(j_formation_large<=global_map_height_-1) largest_global_j_ = j_formation_large;
-  else                                        largest_global_j_ = global_map_height_-1;
-  
+    if(i_formation_large<=global_map_width_-1)  largest_global_i_ = i_formation_large;
+    else                                        largest_global_i_ = global_map_width_-1;
+
+    if(j_formation_large<=global_map_height_-1) largest_global_j_ = j_formation_large;
+    else                                        largest_global_j_ = global_map_height_-1;
+    ROS_WARN("Small %d %d Large %d %d", smallest_global_i_, smallest_global_j_, largest_global_i_, largest_global_j_);
+  }
+
 }
 
 // It creates the global_maps using map_recevied
@@ -570,6 +588,10 @@ bool Control::isFormationInElasticThreshold(geometry_msgs::Pose pose) {
   return obst;
 }
 
+void Control::MoveRobotsToFormationUnitePoint(navfn::NavfnROS *planner){
+
+}
+
 // It moves the formation_center using the new plan, it can stop the formation
 void Control::MoveFormation(navfn::NavfnROS *planner){
 
@@ -580,11 +602,13 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
 
   geometry_msgs::Quaternion new_quat;
 
-  start.pose = formation_center;
-  start.header.frame_id = "map";
-  start.header.stamp=ros::Time::now();
+  if(!formationSeparated){
+    start.pose = formation_center;
+    start.header.frame_id = "map";
+    start.header.stamp=ros::Time::now();
 
-  planner->makePlan(start, goal, plan);
+    planner->makePlan(start, goal, plan);
+  }
 
   bool stop = false;
   #ifndef PURE_METHOD
@@ -972,12 +996,13 @@ int main(int argc, char** argv){
 
       central_control.MoveFormation(&navfn);
 
+      central_control.SetFormationMapLimits();
+
       // central_control.formationSeparated
-      if(false) {
+      if(central_control.formationSeparated) {
 
 
       } else {
-        central_control.SetFormationMapLimits();
 
         central_control.CalculateVparamCurrent();
 
