@@ -119,6 +119,7 @@ class Control{
     std::vector<geometry_msgs::PoseStamped> plan;
     
     int separatedRobotPlanStep[NUM_ROBOTS];
+    bool separatedRobotWaitingNeighbor[NUM_ROBOTS];
     int unitePoseStepInPlan;
 
     vector<Cell> global_map_[NUM_ROBOTS+1];
@@ -349,8 +350,13 @@ void global_costmap_callback(const nav_msgs::OccupancyGrid& msg){
     float local_v[2];
 
     if(formationSeparated){
-      local_v[0] = 0;
-      local_v[1] = 0;
+      if(separatedRobotWaitingNeighbor[robot_num-1]){
+        local_v[0] = pot_parameter_v_current[robot_num-1][0];
+        local_v[1] = pot_parameter_v_current[robot_num-1][1];
+      }else{
+        local_v[0] = 0;
+        local_v[1] = 0;
+      }
     }else{
       local_v[0] = pot_parameter_v_current[robot_num-1][0] - (intermediate_goal.position.x - formation_center.position.x);
       local_v[1] = pot_parameter_v_current[robot_num-1][1] - (intermediate_goal.position.y - formation_center.position.y);
@@ -610,6 +616,7 @@ void Control::MoveRobotsToFormationUnitePoint(navfn::NavfnROS *planner){
   double time = duration.toSec();
 
   geometry_msgs::Quaternion new_quat;
+  bool isFormationReunited = true;
 
   #ifndef PURE_METHOD
 
@@ -622,22 +629,36 @@ void Control::MoveRobotsToFormationUnitePoint(navfn::NavfnROS *planner){
     dist_robot_form = sqrt( pow(robots_position[robot_num].position.x - plan[plan_step].pose.position.x, 2.0) 
                           + pow(robots_position[robot_num].position.y - plan[plan_step].pose.position.y, 2.0));
     
-    if(dist_robot_form > formation_side_size/8.0){
+    if(dist_robot_form > formation_side_size/4.0){
       stop = true;
-      ROS_WARN("STOP %d x %f y %f]", robot_num, dist_robot_form, formation_side_size/8.0);
-      ROS_WARN("%f,%f %f,%f", robots_position[robot_num].position.x, robots_position[robot_num].position.y, plan[plan_step].pose.position.x, plan[plan_step].pose.position.y);
+      // ROS_WARN("STOP %d x %f y %f]", robot_num, dist_robot_form, formation_side_size/8.0);
+      // ROS_WARN("%f,%f %f,%f", robots_position[robot_num].position.x, robots_position[robot_num].position.y, plan[plan_step].pose.position.x, plan[plan_step].pose.position.y);
+    }
+
+    if(plan_step == unitePoseStepInPlan){
+      stop = true;
+      separatedRobotWaitingNeighbor[robot_num-1] = true;
+    } else {
+      isFormationReunited = false;
+      separatedRobotWaitingNeighbor[robot_num-1] = false;
     }
 
     // Se está proximo do plan[plan_step].pose , muda para a prox posição
     // Se não não altera o plan[plan_step].pose
     if(!stop) {
       separatedRobotPlanStep[robot_num-1] = separatedRobotPlanStep[robot_num-1] + 5;
-      // separatedRobotPlanStep[robot_num-1] = std::min(unitePoseStepInPlan, separatedRobotPlanStep[robot_num-1]);
+      separatedRobotPlanStep[robot_num-1] = std::min(unitePoseStepInPlan, separatedRobotPlanStep[robot_num-1]);
       ROS_WARN("For %d : [%d,%d,%d]", robot_num, separatedRobotPlanStep[0], separatedRobotPlanStep[1], separatedRobotPlanStep[2]);
       ROS_WARN("Int Robot Separated x %f y %f]", plan[separatedRobotPlanStep[robot_num-1]].pose.position.x, plan[separatedRobotPlanStep[robot_num-1]].pose.position.y);
     }
-  }  
+  }
 
+  formationSeparated = !isFormationReunited;
+  if(isFormationReunited){
+    for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
+      separatedRobotWaitingNeighbor[robot_num-1] = false;
+    }
+  }
   #endif
 }
 
@@ -722,9 +743,9 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
     if(isFormationInElasticThreshold(formation_center)) {
       formationSeparated = true;
       SetFormationUnitePose();
-      separatedRobotPlanStep[0] = cell_distance;
-      separatedRobotPlanStep[1] = cell_distance;
-      separatedRobotPlanStep[2] = cell_distance;
+      for(int robot_num = 0; robot_num < NUM_ROBOTS; robot_num++){
+        separatedRobotPlanStep[robot_num] = prox_pose;
+      }
       ROS_WARN("[%d,%d,%d]", separatedRobotPlanStep[0], separatedRobotPlanStep[1], separatedRobotPlanStep[2]);
       ROS_WARN("Int Robot Separated x %f y %f]", plan[cell_distance].pose.position.x, plan[cell_distance].pose.position.y);
     }
@@ -746,7 +767,7 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
 void Control::SetFormationUnitePose(){
 
   int prox_pose = 5;
-  int prox_pose_sum = dist_intermediate_center/global_map_resolution_;
+  int prox_pose_sum = dist_intermediate_center/(global_map_resolution_);
   geometry_msgs::Quaternion new_quat;
   bool isInThreshold = true;
 
@@ -760,7 +781,7 @@ void Control::SetFormationUnitePose(){
     unitePoseStepInPlan = prox_pose_sum;
 
     isInThreshold = isFormationInElasticThreshold(unitePose);
-    
+
     prox_pose_sum = prox_pose_sum + prox_pose;
   } while (isInThreshold);
 
@@ -1029,7 +1050,7 @@ int main(int argc, char** argv){
 
   // Tunnelx2
   central_control.SetInitialStartPosition(1, 0, 0, 0);
-  central_control.SetGoalPosition(6.0, 0, 0, 0);
+  central_control.SetGoalPosition(7.5, 0, 0, 0);
 
   initial_time = ros::Time::now();
 
