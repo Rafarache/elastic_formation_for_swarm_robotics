@@ -107,7 +107,6 @@ class Control{
 
     geometry_msgs::Pose formation_center_initial, formation_center;
     
-    
     bool formationSeparated = false;
     geometry_msgs::Pose unitePose;
 
@@ -118,6 +117,9 @@ class Control{
 
     geometry_msgs::PoseStamped start, goal;
     std::vector<geometry_msgs::PoseStamped> plan;
+    
+    int separatedRobotPlanStep[NUM_ROBOTS];
+    int unitePoseStepInPlan;
 
     vector<Cell> global_map_[NUM_ROBOTS+1];
     vector<OldCell> previously_occupied[NUM_ROBOTS+1];
@@ -255,11 +257,17 @@ void global_costmap_callback(const nav_msgs::OccupancyGrid& msg){
         }
       }
 
-    int goal_size = 2;
+    int goal_size = 3;
 
     for(int r=INITIAL_MAP; r<=NUM_ROBOTS; r++){
       int i_goal, j_goal;
-      std::tie(i_goal, j_goal) = transformCoordinateOdomToMap(intermediate_goal.position.x, intermediate_goal.position.y);
+      if(formationSeparated){
+        float plan_step = std::min(separatedRobotPlanStep[r-1], unitePoseStepInPlan);
+        // ROS_WARN("GOAL %d x %f y %f", r, plan[plan_step].pose.position.x, plan[plan_step].pose.position.y);
+        std::tie(i_goal, j_goal) = transformCoordinateOdomToMap(plan[plan_step].pose.position.x, plan[plan_step].pose.position.y);
+      }else{
+        std::tie(i_goal, j_goal) = transformCoordinateOdomToMap(intermediate_goal.position.x, intermediate_goal.position.y);
+      }
 
       for (int j = j_goal - goal_size; j <= j_goal + goal_size; ++j) {
         for (int i = i_goal - goal_size; i <= i_goal + goal_size; ++i) {          
@@ -340,8 +348,13 @@ void global_costmap_callback(const nav_msgs::OccupancyGrid& msg){
     double left, right, up, down;
     float local_v[2];
 
-    local_v[0] = pot_parameter_v_current[robot_num-1][0] - (intermediate_goal.position.x - formation_center.position.x);
-    local_v[1] = pot_parameter_v_current[robot_num-1][1] - (intermediate_goal.position.y - formation_center.position.y);
+    if(formationSeparated){
+      local_v[0] = 0;
+      local_v[1] = 0;
+    }else{
+      local_v[0] = pot_parameter_v_current[robot_num-1][0] - (intermediate_goal.position.x - formation_center.position.x);
+      local_v[1] = pot_parameter_v_current[robot_num-1][1] - (intermediate_goal.position.y - formation_center.position.y);
+    }
 
     for (int j = smallest_global_j_; j <= largest_global_j_; ++j) {
       for (int i = smallest_global_i_; i <= largest_global_i_; ++i) {
@@ -403,21 +416,23 @@ std::tuple<float, float> Control::GradientDescentOrientationMag(int robot_num){
 
 // It sets the limits using formation_center and formation_side_size
 void Control::SetFormationMapLimits(){
-  int i_formation_small = 0, j_formation_small = 0, i_formation_large = global_map_height_-1, j_formation_large = global_map_height_-1;
+  int i_formation_small = 0, j_formation_small = 0, i_formation_large = global_map_width_-1, j_formation_large = global_map_height_-1;
   int i_formation_small_aux, j_formation_small_aux, i_formation_large_aux, j_formation_large_aux;
 
   if(formationSeparated){
     for(int robot_num=INITIAL_MAP; robot_num<=NUM_ROBOTS; robot_num++){
-      std::tie(i_formation_small_aux, j_formation_small_aux) = transformCoordinateOdomToMap(robots_position[robot_num].position.x-formation_side_size/2.0, robots_position[robot_num].position.y-formation_side_size/2.0);
-      std::tie(i_formation_large_aux, j_formation_large_aux) = transformCoordinateOdomToMap(robots_position[robot_num].position.x+formation_side_size/2.0, robots_position[robot_num].position.y+formation_side_size/2.0);
+      float plan_step = std::min(separatedRobotPlanStep[robot_num-1], unitePoseStepInPlan);
+
+      std::tie(i_formation_small_aux, j_formation_small_aux) = transformCoordinateOdomToMap(plan[plan_step].pose.position.x-formation_side_size/2.0, plan[plan_step].pose.position.y-formation_side_size/2.0);
+      std::tie(i_formation_large_aux, j_formation_large_aux) = transformCoordinateOdomToMap(plan[plan_step].pose.position.x+formation_side_size/2.0, plan[plan_step].pose.position.y+formation_side_size/2.0);
       
-      i_formation_small = std::max(i_formation_small, i_formation_small_aux);
-      j_formation_small = std::max(j_formation_small, j_formation_small_aux);
-      i_formation_large = std::min(i_formation_large, i_formation_large_aux);
-      j_formation_large = std::min(j_formation_large, j_formation_large_aux);
-      ROS_WARN("Pos %d : %f %f", robot_num, robots_position[robot_num].position.x, robots_position[robot_num].position.y);
+      smallest_global_i_ = std::max(i_formation_small, i_formation_small_aux);
+      smallest_global_j_ = std::max(j_formation_small, j_formation_small_aux);
+      largest_global_i_ = std::min(i_formation_large, i_formation_large_aux);
+      largest_global_j_ = std::min(j_formation_large, j_formation_large_aux);
+      // ROS_WARN("Pos %d : %f %f", robot_num, robots_position[robot_num].position.x, robots_position[robot_num].position.y);
     }
-    ROS_WARN("Small %d %d Large %d %d", i_formation_small, j_formation_small, i_formation_large, j_formation_large);
+    // ROS_WARN("Small %d %d Large %d %d", i_formation_small, j_formation_small, i_formation_large, j_formation_large);
 
   }else {
     std::tie(i_formation_small, j_formation_small) = transformCoordinateOdomToMap(formation_center.position.x-formation_side_size/2.0, formation_center.position.y-formation_side_size/2.0);
@@ -434,7 +449,7 @@ void Control::SetFormationMapLimits(){
 
     if(j_formation_large<=global_map_height_-1) largest_global_j_ = j_formation_large;
     else                                        largest_global_j_ = global_map_height_-1;
-    ROS_WARN("Small %d %d Large %d %d", smallest_global_i_, smallest_global_j_, largest_global_i_, largest_global_j_);
+    // ROS_WARN("Small %d %d Large %d %d", smallest_global_i_, smallest_global_j_, largest_global_i_, largest_global_j_);
   }
 
 }
@@ -589,7 +604,41 @@ bool Control::isFormationInElasticThreshold(geometry_msgs::Pose pose) {
 }
 
 void Control::MoveRobotsToFormationUnitePoint(navfn::NavfnROS *planner){
+  ros::Time time_now = ros::Time::now();
 
+  ros::Duration duration = time_now - initial_time, duration_int;
+  double time = duration.toSec();
+
+  geometry_msgs::Quaternion new_quat;
+
+  #ifndef PURE_METHOD
+
+  for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
+    // Teste de se pode ir para a proxima posição do planer
+    float dist_robot_form;
+    bool stop = false;
+    float plan_step = separatedRobotPlanStep[robot_num-1];
+    // It stops the formation if the robot is too far from the ideal position
+    dist_robot_form = sqrt( pow(robots_position[robot_num].position.x - plan[plan_step].pose.position.x, 2.0) 
+                          + pow(robots_position[robot_num].position.y - plan[plan_step].pose.position.y, 2.0));
+    
+    if(dist_robot_form > formation_side_size/8.0){
+      stop = true;
+      ROS_WARN("STOP %d x %f y %f]", robot_num, dist_robot_form, formation_side_size/8.0);
+      ROS_WARN("%f,%f %f,%f", robots_position[robot_num].position.x, robots_position[robot_num].position.y, plan[plan_step].pose.position.x, plan[plan_step].pose.position.y);
+    }
+
+    // Se está proximo do plan[plan_step].pose , muda para a prox posição
+    // Se não não altera o plan[plan_step].pose
+    if(!stop) {
+      separatedRobotPlanStep[robot_num-1] = separatedRobotPlanStep[robot_num-1] + 5;
+      // separatedRobotPlanStep[robot_num-1] = std::min(unitePoseStepInPlan, separatedRobotPlanStep[robot_num-1]);
+      ROS_WARN("For %d : [%d,%d,%d]", robot_num, separatedRobotPlanStep[0], separatedRobotPlanStep[1], separatedRobotPlanStep[2]);
+      ROS_WARN("Int Robot Separated x %f y %f]", plan[separatedRobotPlanStep[robot_num-1]].pose.position.x, plan[separatedRobotPlanStep[robot_num-1]].pose.position.y);
+    }
+  }  
+
+  #endif
 }
 
 // It moves the formation_center using the new plan, it can stop the formation
@@ -635,7 +684,7 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
 
   #endif
 
-  if(!stop){
+  if(!stop && !formationSeparated){
     float real_distance;
     int cell_distance = dist_intermediate_center/global_map_resolution_;
 
@@ -670,9 +719,14 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
     formation_center.orientation = new_quat;
     intermediate_goal.orientation = new_quat;
 
-    if(!formationSeparated && isFormationInElasticThreshold(formation_center)) {
+    if(isFormationInElasticThreshold(formation_center)) {
       formationSeparated = true;
       SetFormationUnitePose();
+      separatedRobotPlanStep[0] = cell_distance;
+      separatedRobotPlanStep[1] = cell_distance;
+      separatedRobotPlanStep[2] = cell_distance;
+      ROS_WARN("[%d,%d,%d]", separatedRobotPlanStep[0], separatedRobotPlanStep[1], separatedRobotPlanStep[2]);
+      ROS_WARN("Int Robot Separated x %f y %f]", plan[cell_distance].pose.position.x, plan[cell_distance].pose.position.y);
     }
 
     ROS_WARN("LIMIT %d", formationSeparated);
@@ -692,7 +746,7 @@ void Control::MoveFormation(navfn::NavfnROS *planner){
 void Control::SetFormationUnitePose(){
 
   int prox_pose = 5;
-  int prox_pose_sum = prox_pose;
+  int prox_pose_sum = dist_intermediate_center/global_map_resolution_;
   geometry_msgs::Quaternion new_quat;
   bool isInThreshold = true;
 
@@ -703,11 +757,16 @@ void Control::SetFormationUnitePose(){
     unitePose.position.x = plan[prox_pose_sum].pose.position.x;
     unitePose.position.y = plan[prox_pose_sum].pose.position.y;
     unitePose.orientation = new_quat;
+    unitePoseStepInPlan = prox_pose_sum;
 
     isInThreshold = isFormationInElasticThreshold(unitePose);
     
     prox_pose_sum = prox_pose_sum + prox_pose;
   } while (isInThreshold);
+
+  formation_center.position.x = unitePose.position.x;
+  formation_center.position.y = unitePose.position.y;
+  formation_center.orientation = new_quat;
 
   ROS_WARN("Unite Pose %f %f", unitePose.position.x, unitePose.position.y);
 }
@@ -970,7 +1029,7 @@ int main(int argc, char** argv){
 
   // Tunnelx2
   central_control.SetInitialStartPosition(1, 0, 0, 0);
-  central_control.SetGoalPosition(7.5, 0, 0, 0);
+  central_control.SetGoalPosition(6.0, 0, 0, 0);
 
   initial_time = ros::Time::now();
 
@@ -1001,37 +1060,42 @@ int main(int argc, char** argv){
       // central_control.formationSeparated
       if(central_control.formationSeparated) {
 
+        central_control.MoveRobotsToFormationUnitePoint(&navfn);
 
       } else {
 
         central_control.CalculateVparamCurrent();
+  
+      }
 
-        central_control.InitializePotentialField();
+      central_control.InitializePotentialField();
 
-        for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++)
-          for(int p=0;p<150;p++)
-            central_control.UpdatePotentialField(robot_num);
+      for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++)
+        for(int p=0;p<150;p++)
+          central_control.UpdatePotentialField(robot_num);
 
-        central_control.AddNeighborAsObstacle();
+      central_control.AddNeighborAsObstacle();
 
-        for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
-          for(int p=0;p< 10;p++)
-            central_control.UpdatePotentialField(robot_num);
+      for(int robot_num = INITIAL_MAP; robot_num <= NUM_ROBOTS; robot_num++){
+        for(int p=0;p< 10;p++)
+          central_control.UpdatePotentialField(robot_num);
 
-          #ifdef PUB_POT_MAPS
-            central_control.CreateFormationMapMsg(robot_num);
-            formation_map_pub[robot_num].publish(formation_map[robot_num]);
-          #endif
+        #ifdef PUB_POT_MAPS
+          central_control.CreateFormationMapMsg(robot_num);
+          formation_map_pub[robot_num].publish(formation_map[robot_num]);
+        #endif
 
-          std::tie(grad_msg.data, grad_mag_msg.data) = central_control.GradientDescentOrientationMag(robot_num);
-          robot_grad_pub[robot_num].publish(grad_msg);
-          robot_grad_mag_pub[robot_num].publish(grad_mag_msg);
+        std::tie(grad_msg.data, grad_mag_msg.data) = central_control.GradientDescentOrientationMag(robot_num);
         
-          pose_msg = central_control.CalculateRobotIdealPoseOnFormation(robot_num);
-          pose_msg.header.stamp=ros::Time::now();
-          pose_msg.header.frame_id="map";
-          robot_on_formation_pub[robot_num].publish(pose_msg);
-        }
+        // ROS_WARN("Vector %f Mag %f", grad_msg.data, grad_mag_msg.data);
+
+        robot_grad_pub[robot_num].publish(grad_msg);
+        robot_grad_mag_pub[robot_num].publish(grad_mag_msg);
+      
+        pose_msg = central_control.CalculateRobotIdealPoseOnFormation(robot_num);
+        pose_msg.header.stamp=ros::Time::now();
+        pose_msg.header.frame_id="map";
+        robot_on_formation_pub[robot_num].publish(pose_msg);
       }
 
       test_point_msg.header.stamp = ros::Time::now();
