@@ -21,7 +21,7 @@ typedef actionlib::SimpleActionClient<move_base_msgs::MoveBaseAction> MoveBaseCl
    “Managing coherent groups,” Computer Animation and Virtual Worlds, vol. 19, no. 3-4, pp. 295–305, 2008.*/
 // #define PURE_METHOD
 
-#define NUM_ROBOTS 3//4//2
+#define NUM_ROBOTS 4//4//2
 
 #define INITIAL_MAP 1
 
@@ -1012,12 +1012,14 @@ int main(int argc, char** argv){
 
   // Start algoritm
 
-  float e[NUM_ROBOTS] = {-0.4, -0.4, -0.4};
-                        // {-0.4, -0.4, -0.4, -0.4};
+  float e[NUM_ROBOTS] = 
+                        // {-0.4, -0.4, -0.4};
+                        {-0.4, -0.4, -0.4, -0.4};
                         // {-0.4, -0.4};
 
-  float v[NUM_ROBOTS][2] = {{0.75,  1.0}, {-0.75,  1.0},  {0.0, -1.0}};
-                          // {{0.75,  0.75}, {-0.75, 0.75}, {0.75,  -0.75}, {-0.75, -0.75}};
+  float v[NUM_ROBOTS][2] = 
+                          // {{0.75,  1.0}, {-0.75,  1.0},  {0.0, -1.0}};
+                          {{0.75,  0.75}, {-0.75, 0.75}, {0.75,  -0.75}, {-0.75, -0.75}};
                           // {{0.5,  0.5}, {-0.5, 0.5}, {0.5,  -0.5}, {-0.5, -0.5}};
                           //{{0.0,  1.0}, {0.0, -1.0}};
                         

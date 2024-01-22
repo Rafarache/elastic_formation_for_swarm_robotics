@@ -17,7 +17,7 @@
     </node>
 
     <!-- include our robots -->
-    <include file="$(find multiple_turtlebots_nav)/launch/generated_robots_room3robots_tunnelx2.launch"/>
+    <include file="$(find multiple_turtlebots_nav)/launch/generated_robots_room4robots_tunnelx2.launch"/>
 
      <!-- launch the overall visualization on rviz -->
     <node pkg="rviz" type="rviz" name="rviz" required="true"
